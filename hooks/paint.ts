@@ -1,5 +1,5 @@
-import { GW, PAD, txt } from './grid'
-import type { Gr } from './grid'
+import { GW, PAD, lay } from './grid'
+import type { Gr, Hl, Rw } from './grid'
 import { HIP, L1, L2 } from './spider'
 import type { Sm } from './spider'
 
@@ -53,39 +53,46 @@ const body = (v: Cv, s: Sm) => {
   px(v, s.bx + ch * 3.5, s.by + sh * 3.5, 3)
 }
 
+const look = (w: Rw, hl: Hl) => {
+  const all = w.sg.every(q => q.x < 0 || hl.has(q.x))
+  const ctx = w.k === ' ', nw = w.k === 'm' ? all : w.k === '+', gone = w.k === '-' && all
+  return {
+    bg: ctx ? DF : gone || (w.k === 'm' && !all) ? DEL.bg : nw ? ADD.bg : DF,
+    n: nw ? w.nn : w.k === '+' ? null : w.on,
+    mk: ctx ? ' ' : nw ? '+' : '-',
+    mc: nw ? ADD.mk : ctx ? GUT : DEL.mk,
+    fg: ctx ? CTX : gone ? DEL.fg : nw ? ADD.fg : w.k === 'm' ? 0xc8b0b4 : CTX,
+  }
+}
+
 export function frame(gr: Gr, s: Sm): string {
   const { C, R } = gr, N = C * R, hl = s.hl
-  const g = new Uint32Array(N).fill(0x20), f = new Uint32Array(N).fill(DF), b = new Uint32Array(N).fill(DF)
+  const u = new Uint32Array(N * 3)
+  for (let i = 0; i < N * 3; i += 3) { u[i] = 0x20; u[i + 1] = DF; u[i + 2] = DF }
   const put = (r: number, c: number, t: string, fg: number, bg?: number) => {
     let i = 0
     for (const ch of t) {
       if (c + i >= C) break
-      const k = r * C + c + i++
-      g[k] = ch.codePointAt(0)!
-      f[k] = fg
-      if (bg !== undefined) b[k] = bg
+      const k = (r * C + c + i++) * 3
+      u[k] = ch.codePointAt(0)!
+      u[k + 1] = fg
+      if (bg !== undefined) u[k + 2] = bg
     }
-    return i
   }
   gr.rw.forEach((w, j) => {
     const r = j + PAD
-    if (w.k === '~') return void put(r, 2, w.sg[0]!.n, GUT)
-    const sx = w.sg.filter(q => q.x >= 0), all = sx.every(q => hl.has(q.x))
-    const nw = w.k === 'm' ? all : w.k === '+'
-    const gone = w.k === '-' && all
-    const bg = w.k === ' ' ? DF : gone || (w.k === 'm' && !all) ? DEL.bg : nw ? ADD.bg : DF
-    b.fill(bg, r * C, r * C + C)
-    const n = nw ? w.nn : w.k === '+' ? null : w.on
-    put(r, 0, (n === null ? '' : String(n)).padStart(4), GUT)
-    put(r, 5, w.k === ' ' ? ' ' : nw ? '+' : '-', nw ? ADD.mk : w.k === ' ' ? GUT : DEL.mk)
-    const base = w.k === ' ' ? CTX : gone ? DEL.fg : nw ? ADD.fg : w.k === 'm' ? 0xc8b0b4 : CTX
-    let c = GW
-    for (const q of w.sg) {
-      const t = txt(q, hl)
-      if (q.x >= 0 && hl.has(q.x) && w.k === 'm' && t.trim()) {
+    if (w.k === '~') return put(r, 2, w.sg[0]!.n, GUT)
+    const o = look(w, hl)
+    for (let c = 0; c < C; c++) u[(r * C + c) * 3 + 2] = o.bg
+    put(r, 0, (o.n === null ? '' : String(o.n)).padStart(4), GUT)
+    put(r, 5, o.mk, o.mc)
+    for (const { s: q, t, a } of lay(w, hl)) {
+      const on = q.x >= 0 && w.k === 'm'
+      if (on && hl.has(q.x) && t.trim()) {
         const [hb, hf] = PAL[hl.get(q.x)!]!
-        c += hf === DF ? put(r, c, t, hb) : put(r, c, t, hf, hb)
-      } else c += put(r, c, t, q.x >= 0 && w.k === 'm' && !hl.has(q.x) ? PEND : base)
+        if (hf === DF) put(r, a, t, hb)
+        else put(r, a, t, hf, hb)
+      } else put(r, a, t, on && !hl.has(q.x) ? PEND : o.fg)
     }
   })
   if (!s.done) {
@@ -94,15 +101,9 @@ export function frame(gr: Gr, s: Sm): string {
     body(v, s)
     for (let i = 0; i < N; i++) {
       if (!v.bits[i]) continue
-      g[i] = 0x2800 | v.bits[i]!
-      f[i] = v.kd[i] === 3 ? EYE : v.kd[i] === 2 ? BODY : LEG
+      u[i * 3] = 0x2800 | v.bits[i]!
+      u[i * 3 + 1] = v.kd[i] === 3 ? EYE : v.kd[i] === 2 ? BODY : LEG
     }
-  }
-  const u = new Uint32Array(N * 3)
-  for (let i = 0; i < N; i++) {
-    u[i * 3] = g[i]!
-    u[i * 3 + 1] = f[i]!
-    u[i * 3 + 2] = b[i]!
   }
   return (new Uint8Array(u.buffer) as Uint8Array & { toBase64(): string }).toBase64()
 }

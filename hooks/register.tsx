@@ -17,10 +17,12 @@ const FPS = 33
 const KEEP = 200
 
 const cols = (n?: number) => Math.max(30, Math.min(160, (n ?? 100) - 6))
-const cnt = (ls: Ln[], k: Ln['k']) => ls.reduce((n, l) => n + (l.k === k ? 1 : 0), 0)
-const sum = (ls: Ln[], gr: Gr) => {
-  const m = gr.rw.filter(r => r.k === 'm').length
-  return [m && `${m} changed`, `${cnt(ls, '+') - m} added`, `${cnt(ls, '-') - m} removed`].filter(Boolean).join(', ')
+const ED = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+const sum = (gr: Gr) => {
+  const n = { m: 0, '+': 0, '-': 0 }
+  for (const r of gr.rw) if (r.k in n) n[r.k as keyof typeof n]++
+  return [n.m && `${n.m} changed`, `${n['+']} added`, `${n['-']} removed`].filter(Boolean).join(', ')
 }
 
 const memo = new WeakMap<object, Ln[] | null>()
@@ -34,7 +36,7 @@ const head = (tool: string, inp: In, o: Out): [string, string] => {
   if (tool === 'Bash') return ['Bash', (inp.command ?? '').split('\n')[0]!.slice(0, 80)]
   const p = o.filePath ?? o.notebook_path ?? inp.file_path ?? inp.notebook_path ?? ''
   if (tool === 'Write' && o.type === 'create') return ['Create', p]
-  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return ['Update', p]
+  if (ED.has(tool)) return ['Update', p]
   return [tool, p]
 }
 
@@ -120,7 +122,7 @@ export const register: Register = on => {
           <Text bold>{vb}</Text>({rel})
         </Text>
         <Text dimColor>
-          {'  ⎿  '}crawled {sum(ls, r.gr)}
+          {'  ⎿  '}crawled {sum(r.gr)}
         </Text>
         <Raster key={KEY} columns={r.gr.C} rows={r.gr.R} cells={r.cl} />
       </Box>

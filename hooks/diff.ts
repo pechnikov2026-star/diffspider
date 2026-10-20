@@ -14,7 +14,20 @@ const MAXC = 4_000_000
 const HDR = /^(index |new file mode|deleted file mode|old mode|new mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to|Binary files)/
 const AT = /^(\s*)@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
-const SEP: Ln = { k: '~', n: null, t: '···' }
+const info = (t: string): Ln => ({ k: '~', n: null, t })
+const SEP = info('···')
+const rows = (s: string) => s.replace(/\n$/, '').split('\n')
+const chg = (ls: Ln[]) => ls.some(l => l.k === '+' || l.k === '-')
+
+type Ps = { on: number; nn: number }
+
+const emit = (ls: Ln[], c: string, t: string, p: Ps) => {
+  if (c === '+') ls.push({ k: '+', n: p.nn++, t })
+  else if (c === '-') ls.push({ k: '-', n: p.on++, t })
+  else if (c === ' ') { p.on++; ls.push({ k: ' ', n: p.nn++, t }) }
+  else return false
+  return true
+}
 
 const ok = (c: number) => (c >= 0x20 && c <= 0x7e) || (c >= 0xa1 && c <= 0x17f)
 
@@ -50,19 +63,14 @@ const hunks = (hs: Hk[]) => {
   const ls: Ln[] = []
   hs.forEach((h, i) => {
     if (i) ls.push(SEP)
-    let on = h.oldStart, nn = h.newStart
-    for (const l of h.lines) {
-      const c = l[0], t = l.slice(1)
-      if (c === '+') ls.push({ k: '+', n: nn++, t })
-      else if (c === '-') ls.push({ k: '-', n: on++, t })
-      else if (c === ' ') { ls.push({ k: ' ', n: nn++, t }); on++ }
-    }
+    const p = { on: h.oldStart, nn: h.newStart }
+    for (const l of h.lines) emit(ls, l[0] ?? '', l.slice(1), p)
   })
   return ls
 }
 
 export function ldiff(a: string, b: string): Ln[] | null {
-  const A = a.replace(/\n$/, '').split('\n'), B = b.replace(/\n$/, '').split('\n')
+  const A = rows(a), B = rows(b)
   const o = ops(A, B)
   if (!o) return null
   const keep = o.map(() => false)
@@ -84,35 +92,36 @@ export function ldiff(a: string, b: string): Ln[] | null {
 }
 
 export function parse(txt: string, md: boolean): Ln[] | null {
-  const src = txt.replace(/\n$/, '').split('\n')
-  const ls: Ln[] = []
-  let on = 0, nn = 0, ro = 0, rn = 0, hd = false, old = '', ind = ''
-  for (const l of src) {
+  const ls: Ln[] = [], p: Ps = { on: 0, nn: 0 }
+  let ro = 0, rn = 0, hd = false, old = '', ind = ''
+  for (const l of rows(txt)) {
     const m = AT.exec(l)
     if (m) {
       if (ls.length && ls[ls.length - 1]!.k !== '~') ls.push(SEP)
       ind = m[1]!
-      on = +m[2]!; ro = m[3] === undefined ? 1 : +m[3]
-      nn = +m[4]!; rn = m[5] === undefined ? 1 : +m[5]
+      p.on = +m[2]!; ro = m[3] === undefined ? 1 : +m[3]
+      p.nn = +m[4]!; rn = m[5] === undefined ? 1 : +m[5]
       hd = true
       continue
     }
     if ((ro > 0 || rn > 0) && (l.startsWith(ind) || !l.trim()) && !/^\s*\+\d+ -\d+$/.test(l)) {
       const b = l.slice(ind.length), c = b[0] ?? ' ', t = b.slice(1)
       if (c === '\\') continue
-      if (c === '+') { ls.push({ k: '+', n: nn++, t }); rn--; continue }
-      if (c === '-') { ls.push({ k: '-', n: on++, t }); ro--; continue }
-      if (c === ' ') { ls.push({ k: ' ', n: nn++, t }); on++; ro--; rn--; continue }
+      if (emit(ls, c, t, p)) {
+        if (c !== '+') ro--
+        if (c !== '-') rn--
+        continue
+      }
     }
     ro = rn = 0
     if (l.startsWith('--- ')) { old = l.slice(4).replace(/^a\//, ''); continue }
     if (l.startsWith('+++ ')) {
       const nw = l.slice(4).replace(/^b\//, '')
-      ls.push({ k: '~', n: null, t: nw === '/dev/null' ? old : nw })
+      ls.push(info(nw === '/dev/null' ? old : nw))
       continue
     }
     if (l.startsWith('diff ') || l.startsWith('\\') || HDR.test(l) || !l.trim()) continue
-    if (!md) { ls.push({ k: '~', n: null, t: l.trim() }); continue }
+    if (!md) { ls.push(info(l.trim())); continue }
     if (hd) continue
     const c = l[0]
     if (c === '+') ls.push({ k: '+', n: null, t: l.slice(1) })
@@ -127,7 +136,7 @@ const clip = (ls: Ln[]) => {
   const fp = Math.max(0, ls.findIndex(l => l.k === '+' || l.k === '-'))
   const s = Math.max(0, Math.min(fp - 2, ls.length - MAXL))
   const cut = ls.slice(s, s + MAXL - 1)
-  cut.push({ k: '~', n: null, t: `… ${ls.length - cut.length} more lines` })
+  cut.push(info(`… ${ls.length - cut.length} more lines`))
   return cut
 }
 
@@ -139,14 +148,14 @@ export function lines(tool: string, out: unknown): Ln[] | null {
   else if (tool === 'Write' && typeof o.originalFile === 'string' && typeof o.content === 'string') ls = ldiff(o.originalFile, o.content)
   else if (tool === 'NotebookEdit' && typeof o.old_source === 'string' && typeof o.new_source === 'string') ls = ldiff(o.old_source, o.new_source)
   else if (tool === 'Bash' && typeof o.stdout === 'string' && /^\s*@@ -\d/m.test(o.stdout)) ls = parse(o.stdout, false)
-  return ls && ls.some(l => l.k === '+' || l.k === '-') ? clip(ls) : null
+  return ls && chg(ls) ? clip(ls) : null
 }
 
 export function fences(md: string): { a: number; b: number; ls: Ln[] }[] {
   const r: { a: number; b: number; ls: Ln[] }[] = []
   for (const m of md.matchAll(/^```(?:diff|patch|udiff)[^\n]*\n([\s\S]*?)^```[ \t]*$/gm)) {
     const ls = parse(m[1]!, true)
-    if (ls && ls.some(l => l.k === '+' || l.k === '-')) r.push({ a: m.index!, b: m.index! + m[0].length, ls: clip(ls) })
+    if (ls && chg(ls)) r.push({ a: m.index!, b: m.index! + m[0].length, ls: clip(ls) })
   }
   return r
 }

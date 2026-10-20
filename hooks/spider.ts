@@ -18,6 +18,13 @@ export const NPAL = 7
 
 const RCH = 7, SPD = 3.2, STP = 2, THR = 2, TURN = 0.35, FAR = (L1 + L2) * 0.85
 
+const wrap = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
+
+const clamp = (x: number, y: number, cx: number, cy: number, r: number) => {
+  const d = Math.hypot(x - cx, y - cy)
+  return d > r ? { x: cx + ((x - cx) * r) / d, y: cy + ((y - cy) * r) / d } : { x, y }
+}
+
 const grp = (i: number) => (i % 2) ^ (i >= 4 ? 1 : 0)
 
 const rest = (s: Sm, i: number, ahead = 0) => {
@@ -59,9 +66,7 @@ export function start(gr: Gr): Sm {
 const walk = (gr: Gr, s: Sm) => {
   const p = at(gr, s, s.pts[s.pi]!)
   const dx = p.x - s.bx, dy = p.y - s.by, d = Math.hypot(dx, dy)
-  let da = Math.atan2(dy, dx) - s.hd
-  while (da > Math.PI) da -= 2 * Math.PI
-  while (da < -Math.PI) da += 2 * Math.PI
+  const da = wrap(Math.atan2(dy, dx) - s.hd)
   s.hd += da * TURN
   const v = SPD * Math.max(0.35, Math.cos(da * (1 - TURN)))
   if (d <= v) {
@@ -79,10 +84,7 @@ const walk = (gr: Gr, s: Sm) => {
 
 const aim = (s: Sm, i: number, r: number) => {
   const q = rest(s, i, r)
-  let tx = q.x + s.vx * STP, ty = q.y + s.vy * STP
-  const d = Math.hypot(tx - q.hx, ty - q.hy)
-  if (d > FAR) { tx = q.hx + ((tx - q.hx) * FAR) / d; ty = q.hy + ((ty - q.hy) * FAR) / d }
-  return { tx, ty }
+  return clamp(q.x + s.vx * STP, q.y + s.vy * STP, q.hx, q.hy, FAR)
 }
 
 const lift = (s: Sm, l: Lg) => {
@@ -96,8 +98,8 @@ const gait = (gr: Gr, s: Sm) => {
   s.lg.forEach((l, i) => {
     if (l.st < 0) return
     const t = ++l.st / STP, a = aim(s, i, STP - l.st)
-    l.fx = l.sx + (a.tx - l.sx) * t
-    l.fy = l.sy + (a.ty - l.sy) * t
+    l.fx = l.sx + (a.x - l.sx) * t
+    l.fy = l.sy + (a.y - l.sy) * t
     if (l.st < STP) return void (up = true)
     l.st = -1
     mark(s, hit(gr, s.hl, l.fx, l.fy))

@@ -2,7 +2,8 @@ import { ops, san } from './diff'
 import type { Ln } from './diff'
 
 export type Sg = { o: string; n: string; x: number }
-export type Rw = { k: 'm' | '+' | '-' | ' ' | '~'; on: number | null; nn: number | null; sg: Sg[] }
+export type Rk = 'm' | '+' | '-' | ' ' | '~'
+export type Rw = { k: Rk; on: number | null; nn: number | null; sg: Sg[] }
 export type Gr = { C: number; R: number; rw: Rw[]; nt: number; tg: number[]; tr: number[] }
 export type Hl = ReadonlyMap<number, number>
 
@@ -78,6 +79,8 @@ const pair = (D: string[], A: string[]): [number, number, Sg[]][] => {
 
 export const txt = (sg: Sg, hl: Hl) => (sg.x < 0 || hl.has(sg.x) ? sg.n : sg.o)
 
+const one = (k: Rk, on: number | null, nn: number | null, o: string, n: string, x: number): Rw => ({ k, on, nn, sg: [{ o, n, x }] })
+
 export function build(ls: Ln[], C: number): Gr {
   const rw: Rw[] = []
   let i = 0
@@ -85,8 +88,7 @@ export function build(ls: Ln[], C: number): Gr {
     const l = ls[i]!
     if (l.k !== '-') {
       const t = san(l.t)
-      if (l.k === '+') rw.push({ k: '+', on: null, nn: l.n, sg: [{ o: '', n: t, x: 0 }] })
-      else rw.push({ k: l.k, on: l.n, nn: l.n, sg: [{ o: t, n: t, x: -1 }] })
+      rw.push(l.k === '+' ? one('+', null, l.n, '', t, 0) : one(l.k, l.n, l.n, t, t, -1))
       i++
       continue
     }
@@ -94,18 +96,18 @@ export function build(ls: Ln[], C: number): Gr {
     while (i < ls.length && ls[i]!.k === '-') ds.push(ls[i++]!)
     while (i < ls.length && ls[i]!.k === '+') as.push(ls[i++]!)
     const D = ds.map(l => san(l.t)), A = as.map(l => san(l.t))
-    const del = (j: number) => rw.push({ k: '-', on: ds[j]!.n, nn: null, sg: [{ o: D[j]!, n: D[j]!, x: 0 }] })
-    const add = (j: number) => rw.push({ k: '+', on: null, nn: as[j]!.n, sg: [{ o: '', n: A[j]!, x: 0 }] })
     let p = 0, q = 0
+    const flush = (a: number, b: number) => {
+      for (; p < a; p++) rw.push(one('-', ds[p]!.n, null, D[p]!, D[p]!, 0))
+      for (; q < b; q++) rw.push(one('+', null, as[q]!.n, '', A[q]!, 0))
+    }
     for (const [a, b, sg] of pair(D, A)) {
-      while (p < a) del(p++)
-      while (q < b) add(q++)
+      flush(a, b)
       rw.push({ k: 'm', on: ds[a]!.n, nn: as[b]!.n, sg })
       p++
       q++
     }
-    while (p < D.length) del(p++)
-    while (q < A.length) add(q++)
+    flush(D.length, A.length)
   }
   const tr: number[] = []
   rw.forEach((r, j) => r.sg.forEach(s => { if (s.x >= 0) { s.x = tr.length; tr.push(j) } }))
@@ -115,25 +117,26 @@ export function build(ls: Ln[], C: number): Gr {
   return { C, R: Math.max(8, rw.length + PAD * 2), rw, nt, tg, tr }
 }
 
+export function* lay(r: Rw, hl: Hl) {
+  let c = GW
+  for (const s of r.sg) {
+    const t = txt(s, hl)
+    yield { s, t, a: c }
+    c += t.length
+  }
+}
+
 export function span(gr: Gr, hl: Hl, x: number) {
   const j = gr.tr[x]!
-  let c = GW
-  for (const s of gr.rw[j]!.sg) {
-    const w = txt(s, hl).length
-    if (s.x === x) return { r: j + PAD, a: Math.min(c, gr.C - 1), b: Math.min(gr.C, c + Math.max(1, w)) }
-    c += w
-  }
+  for (const { s, t, a } of lay(gr.rw[j]!, hl))
+    if (s.x === x) return { r: j + PAD, a: Math.min(a, gr.C - 1), b: Math.min(gr.C, a + Math.max(1, t.length)) }
   return { r: j + PAD, a: GW, b: GW + 1 }
 }
 
 export function hit(gr: Gr, hl: Hl, x: number, y: number) {
   const r = gr.rw[Math.floor(y / 4) - PAD], cx = Math.floor(x / 2)
   if (!r || r.k === ' ' || r.k === '~') return -1
-  let c = GW
-  for (const s of r.sg) {
-    const w = txt(s, hl).length
-    if (s.x >= 0 && cx >= c && cx < c + Math.max(1, w)) return s.x
-    c += w
-  }
+  for (const { s, t, a } of lay(r, hl))
+    if (s.x >= 0 && cx >= a && cx < a + Math.max(1, t.length)) return s.x
   return -1
 }
