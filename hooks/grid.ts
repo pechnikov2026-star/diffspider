@@ -15,10 +15,13 @@ const MAXK = 400
 const SIM = 0.4
 const MAXP = 400
 
+type Wd = [Sg[], number]
+type Pr = [number, number, Sg[]]
+
 const tok = (s: string) => s.match(/\s+|[\w$]+|[^\s\w$]/g) ?? []
 const ink = (s: string) => s.replace(/\s/g, '').length
 
-const words = (a: string, b: string): [Sg[], number] | null => {
+const words = (a: string, b: string): Wd | null => {
   const A = tok(a), B = tok(b)
   const o = A.length > MAXK || B.length > MAXK ? null : ops(A, B)
   if (!o) return null
@@ -49,24 +52,21 @@ const words = (a: string, b: string): [Sg[], number] | null => {
   return sm >= SIM ? [sg, sm] : null
 }
 
-const pair = (D: string[], A: string[]): [number, number, Sg[]][] => {
+const pair = (D: string[], A: string[]): Pr[] => {
   const n = D.length, m = A.length
-  if (n * m > MAXP) {
-    const r: [number, number, Sg[]][] = []
-    for (let i = 0; i < Math.min(n, m); i++) {
-      const w = words(D[i]!, A[i]!)
-      if (w) r.push([i, i, w[0]])
-    }
-    return r
-  }
+  if (n * m > MAXP)
+    return D.slice(0, m).flatMap((d, i): Pr[] => {
+      const w = words(d, A[i]!)
+      return w ? [[i, i, w[0]]] : []
+    })
   const W = m + 1, S = new Float64Array((n + 1) * W)
-  const M: ([Sg[], number] | null)[] = D.flatMap(d => A.map(a => words(d, a)))
+  const M: (Wd | null)[] = D.flatMap(d => A.map(a => words(d, a)))
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--) {
       const w = M[i * m + j]
       S[i * W + j] = Math.max(S[(i + 1) * W + j]!, S[i * W + j + 1]!, w ? w[1] + S[(i + 1) * W + j + 1]! : 0)
     }
-  const r: [number, number, Sg[]][] = []
+  const r: Pr[] = []
   let i = 0, j = 0
   while (i < n && j < m) {
     const w = M[i * m + j], v = S[i * W + j]!

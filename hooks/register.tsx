@@ -8,7 +8,8 @@ import { frame } from './paint'
 import { finish, start, step } from './spider'
 import type { Sm } from './spider'
 
-type Rn = { gr: Gr; s: Sm; cl: string; tm?: { cancel: () => void } }
+type Ad = { rid: string; key: string; id: string }
+type Rn = { ad: Ad; gr: Gr; s: Sm; cl: string; tm?: { cancel: () => void } }
 type Out = { filePath?: string; type?: string; notebook_path?: string }
 type In = { command?: string; file_path?: string; notebook_path?: string }
 
@@ -42,44 +43,49 @@ const head = (tool: string, inp: In, o: Out): [string, string] => {
 
 type St = { runs: Map<string, Rn>; fr: Set<string> }
 
-function end($: EngineInterface, st: St, id: string, r: Rn) {
+function end($: EngineInterface, st: St, r: Rn) {
   r.tm?.cancel()
   r.tm = undefined
   finish(r.gr, r.s)
   r.cl = frame(r.gr, r.s)
-  st.fr.delete(id)
+  st.fr.delete(r.ad.id)
   $.ui.invalidate('ui.render')
 }
 
-function run($: EngineInterface, st: St, rid: string, key: string, id: string, r: Rn) {
+function run($: EngineInterface, st: St, r: Rn) {
+  const { rid, key } = r.ad
   r.tm = $.clock.every(FPS, () => {
     if (r.s.done) return
     step(r.gr, r.s)
-    if (r.s.done) return end($, st, id, r)
+    if (r.s.done) return end($, st, r)
     r.cl = frame(r.gr, r.s)
     void $.ui.blit({ requestId: rid, key, cells: r.cl }).then(x => {
-      if ('deny' in x && x.deny && !r.s.done) end($, st, id, r)
+      if ('deny' in x && x.deny && !r.s.done) end($, st, r)
     })
   })
 }
 
-function get($: EngineInterface, st: St, rid: string, key: string, id: string, ls: Ln[], C: number) {
-  let r = st.runs.get(id)
+const prune = (st: St) => {
+  for (const [k, x] of st.runs) {
+    if (st.runs.size <= KEEP) break
+    if (x.s.done) st.runs.delete(k)
+  }
+}
+
+function get($: EngineInterface, st: St, ad: Ad, ls: Ln[], C: number) {
+  let r = st.runs.get(ad.id)
   if (!r || r.gr.C !== C) {
     const gr = build(ls, C), s = start(gr)
-    if (r || !st.fr.has(id)) {
+    if (r || !st.fr.has(ad.id)) {
       finish(gr, s)
-      st.fr.delete(id)
+      st.fr.delete(ad.id)
     }
     r?.tm?.cancel()
-    r = { gr, s, cl: frame(gr, s) }
-    st.runs.set(id, r)
-    for (const [k, x] of st.runs) {
-      if (st.runs.size <= KEEP) break
-      if (x.s.done) st.runs.delete(k)
-    }
+    r = { ad, gr, s, cl: frame(gr, s) }
+    st.runs.set(ad.id, r)
+    prune(st)
   }
-  if (!r.s.done && !r.tm) run($, st, rid, key, id, r)
+  if (!r.s.done && !r.tm) run($, st, r)
   return r
 }
 
@@ -111,7 +117,7 @@ export const register: Register = on => {
     const ls = diff(p.tool, p.output)
     if (!ls) return next(e)
     const id = e.requestId
-    const r = get($, st, id, KEY, id, ls, cols(e.viewport?.columns))
+    const r = get($, st, { rid: id, key: KEY, id }, ls, cols(e.viewport?.columns))
     const cwd = await $.session.cwd().catch(() => '\0')
     const [vb, arg] = head(p.tool, (p.input ?? {}) as In, p.output as Out)
     const rel = arg.startsWith(cwd + '/') ? arg.slice(cwd.length + 1) : arg
@@ -147,7 +153,7 @@ export const register: Register = on => {
     fs.forEach((f, i) => {
       const id = `${e.requestId}:${i}`, key = `${KEY}-${i}`
       if (live && !runs.has(id)) fr.add(id)
-      const r = get($, st, e.requestId, key, id, f.ls, C)
+      const r = get($, st, { rid: e.requestId, key, id }, f.ls, C)
       const pre = md.slice(at, f.a).trim()
       if (pre) kids.push(<Markdown key={`md-${i}`} text={pre} />)
       kids.push(<Raster key={key} columns={r.gr.C} rows={r.gr.R} cells={r.cl} />)
