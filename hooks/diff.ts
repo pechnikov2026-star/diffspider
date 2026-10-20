@@ -14,6 +14,8 @@ const MAXC = 4_000_000
 const HDR = /^(index |new file mode|deleted file mode|old mode|new mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to|Binary files)/
 const AT = /^(\s*)@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
+const SEP: Ln = { k: '~', n: null, t: '···' }
+
 const ok = (c: number) => (c >= 0x20 && c <= 0x7e) || (c >= 0xa1 && c <= 0x17f)
 
 export const san = (s: string) => {
@@ -47,7 +49,7 @@ export function ops<T>(a: readonly T[], b: readonly T[]): Op[] | null {
 const hunks = (hs: Hk[]) => {
   const ls: Ln[] = []
   hs.forEach((h, i) => {
-    if (i) ls.push({ k: '~', n: null, t: '···' })
+    if (i) ls.push(SEP)
     let on = h.oldStart, nn = h.newStart
     for (const l of h.lines) {
       const c = l[0], t = l.slice(1)
@@ -72,7 +74,7 @@ export function ldiff(a: string, b: string): Ln[] | null {
   let gap = false
   o.forEach((x, i) => {
     if (!keep[i]) return void (gap = true)
-    if (gap && ls.length) ls.push({ k: '~', n: null, t: '···' })
+    if (gap && ls.length) ls.push(SEP)
     gap = false
     if (x[0] === '=') ls.push({ k: ' ', n: x[2] + 1, t: B[x[2]]! })
     else if (x[0] === '-') ls.push({ k: '-', n: x[1] + 1, t: A[x[1]]! })
@@ -88,7 +90,7 @@ export function parse(txt: string, md: boolean): Ln[] | null {
   for (const l of src) {
     const m = AT.exec(l)
     if (m) {
-      if (ls.length && ls[ls.length - 1]!.k !== '~') ls.push({ k: '~', n: null, t: '···' })
+      if (ls.length && ls[ls.length - 1]!.k !== '~') ls.push(SEP)
       ind = m[1]!
       on = +m[2]!; ro = m[3] === undefined ? 1 : +m[3]
       nn = +m[4]!; rn = m[5] === undefined ? 1 : +m[5]

@@ -80,14 +80,13 @@ export const txt = (sg: Sg, hl: Hl) => (sg.x < 0 || hl.has(sg.x) ? sg.n : sg.o)
 
 export function build(ls: Ln[], C: number): Gr {
   const rw: Rw[] = []
-  const sv = (t: string): Sg[] => [{ o: t, n: t, x: -1 }]
   let i = 0
   while (i < ls.length) {
     const l = ls[i]!
     if (l.k !== '-') {
       const t = san(l.t)
       if (l.k === '+') rw.push({ k: '+', on: null, nn: l.n, sg: [{ o: '', n: t, x: 0 }] })
-      else rw.push({ k: l.k, on: l.n, nn: l.n, sg: sv(t) })
+      else rw.push({ k: l.k, on: l.n, nn: l.n, sg: [{ o: t, n: t, x: -1 }] })
       i++
       continue
     }

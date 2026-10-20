@@ -23,7 +23,14 @@ const sum = (ls: Ln[], gr: Gr) => {
   return [m && `${m} changed`, `${cnt(ls, '+') - m} added`, `${cnt(ls, '-') - m} removed`].filter(Boolean).join(', ')
 }
 
-const head = (tool: string, inp: In, o: Out) => {
+const memo = new WeakMap<object, Ln[] | null>()
+const diff = (tool: string, out: unknown) => {
+  if (!out || typeof out !== 'object') return null
+  if (!memo.has(out)) memo.set(out, lines(tool, out))
+  return memo.get(out)!
+}
+
+const head = (tool: string, inp: In, o: Out): [string, string] => {
   if (tool === 'Bash') return ['Bash', (inp.command ?? '').split('\n')[0]!.slice(0, 80)]
   const p = o.filePath ?? o.notebook_path ?? inp.file_path ?? inp.notebook_path ?? ''
   if (tool === 'Write' && o.type === 'create') return ['Create', p]
@@ -86,7 +93,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const r = await next(e)
-    if (e.tool_use_id && 'result' in r && r.result !== undefined && !r.isError && lines(e.tool, r.result)) fr.add(e.tool_use_id)
+    if (e.tool_use_id && 'result' in r && r.result !== undefined && !r.isError && diff(e.tool, r.result)) fr.add(e.tool_use_id)
     return r
   }).catch(($, e, next) => next(e))
 
@@ -99,13 +106,13 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const p = e.props
     if (e.surface !== 'terminal' || p.isRunning || p.isErrored || p.isInterrupted) return next(e)
-    const ls = lines(p.tool, p.output)
+    const ls = diff(p.tool, p.output)
     if (!ls) return next(e)
     const id = e.requestId
     const r = get($, st, id, KEY, id, ls, cols(e.viewport?.columns))
     const cwd = await $.session.cwd().catch(() => '\0')
     const [vb, arg] = head(p.tool, (p.input ?? {}) as In, p.output as Out)
-    const rel = arg!.startsWith(cwd + '/') ? arg!.slice(cwd.length + 1) : arg
+    const rel = arg.startsWith(cwd + '/') ? arg.slice(cwd.length + 1) : arg
     const { Box, Text, Raster } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
@@ -122,7 +129,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolResult' }, ($, e, next) => {
     const p = e.props
-    if (e.surface !== 'terminal' || p.isErrored || !lines(p.tool, p.output)) return next(e)
+    if (e.surface !== 'terminal' || p.isErrored || !diff(p.tool, p.output)) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   })
