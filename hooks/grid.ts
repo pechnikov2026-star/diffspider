@@ -9,7 +9,7 @@ export type Hl = ReadonlyMap<number, number>
 export const PAD = 2
 export const GW = 7
 
-const MAXT = 36
+const MAXT = 24
 const MAXK = 400
 const SIM = 0.4
 const MAXP = 400
