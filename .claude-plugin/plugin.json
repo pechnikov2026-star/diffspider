@@ -1,6 +1,6 @@
 {
   "name": "diffspider",
-  "version": "0.1.0",
-  "description": "A braille spider crawls over every Edit and Write diff in Claude Code and marks the changed words neon",
+  "version": "0.2.0",
+  "description": "A braille spider crawls over every diff in Claude Code and morphs the changed words from old to new",
   "author": { "name": "Silvertree2010" }
 }

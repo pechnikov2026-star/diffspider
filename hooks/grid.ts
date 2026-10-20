@@ -1,59 +1,140 @@
-import { san } from './diff'
+import { ops, san } from './diff'
 import type { Ln } from './diff'
 
-export type Wd = { r: number; a: number; b: number }
-export type Gr = { C: number; R: number; g: Uint32Array; f: Uint32Array; b: Uint32Array; w: Wd[]; tg: number[] }
+export type Sg = { o: string; n: string; x: number }
+export type Rw = { k: 'm' | '+' | '-' | ' ' | '~'; on: number | null; nn: number | null; sg: Sg[] }
+export type Gr = { C: number; R: number; rw: Rw[]; nt: number; tg: number[]; tr: number[] }
+export type Hl = ReadonlyMap<number, number>
 
-export const DF = 0x01000000
+export const PAD = 2
+export const GW = 7
 
-const PAD = 2
-const GW = 7
-const INK = {
-  gut: 0x5c6370,
-  '+': { bg: 0x0f2418, mk: 0x2bff88, fg: 0xe6e6e6 },
-  '-': { bg: 0x2a1216, mk: 0xff5c7a, fg: 0x8a5a5a },
-  ' ': { bg: DF, mk: 0x5c6370, fg: 0x8b8f98 },
-}
+const MAXT = 36
+const MAXK = 400
+const SIM = 0.4
+const MAXP = 400
 
-const pick = (w: Wd[], n: number) => {
-  const big = w.flatMap((x, i) => (x.b - x.a >= 3 ? [i] : []))
-  const k = Math.min(Math.max(9, Math.ceil(n / 4)), 30, big.length)
-  return Array.from({ length: k }, (_, i) => big[Math.floor((i * big.length) / k)]!)
-}
+const tok = (s: string) => s.match(/\s+|[\w$]+|[^\s\w$]/g) ?? []
+const ink = (s: string) => s.replace(/\s/g, '').length
 
-export function build(ls: Ln[], C: number): Gr {
-  const R = Math.max(8, ls.length + PAD * 2)
-  const N = C * R
-  const g = new Uint32Array(N).fill(0x20), f = new Uint32Array(N).fill(DF), b = new Uint32Array(N).fill(DF)
-  const w: Wd[] = []
-  const put = (r: number, c: number, s: string, fg: number) => {
-    let i = 0
-    for (const ch of s) {
-      if (c + i >= C) break
-      g[r * C + c + i] = ch.codePointAt(0)!
-      f[r * C + c + i] = fg
-      i++
+const words = (a: string, b: string): [Sg[], number] | null => {
+  const A = tok(a), B = tok(b)
+  const o = A.length > MAXK || B.length > MAXK ? null : ops(A, B)
+  if (!o) return null
+  const sg: Sg[] = []
+  let eq = 0
+  for (const x of o) {
+    const lt = sg[sg.length - 1]
+    if (x[0] === '=') {
+      const t = A[x[1]]!
+      eq += ink(t)
+      if (lt && lt.x < 0) { lt.o += t; lt.n += t }
+      else sg.push({ o: t, n: t, x: -1 })
+    } else {
+      const o1 = x[0] === '-' ? A[x[1]]! : '', n1 = x[0] === '+' ? B[x[2]]! : ''
+      if (lt && lt.x >= 0) { lt.o += o1; lt.n += n1 }
+      else sg.push({ o: o1, n: n1, x: 0 })
     }
   }
-  ls.forEach((l, j) => {
-    const r = j + PAD
-    if (l.k === '~') return put(r, 2, san(l.t), INK.gut)
-    const ik = INK[l.k]
-    b.fill(ik.bg, r * C, r * C + C)
-    put(r, 0, (l.n === null ? '' : String(l.n)).padStart(4), INK.gut)
-    put(r, 5, l.k, ik.mk)
-    const t = san(l.t)
-    put(r, GW, t, ik.fg)
-    if (l.k !== '+') return
-    for (const m of t.matchAll(/[\w$]+|[^\s\w$]+/g)) {
-      const a = GW + m.index!
-      if (a < C) w.push({ r, a, b: Math.min(C, a + m[0].length) })
+  for (let i = sg.length - 2; i > 0; i--) {
+    const p = sg[i - 1]!, q = sg[i]!, r = sg[i + 1]!
+    if (q.x < 0 && p.x >= 0 && r.x >= 0 && !q.o.trim()) {
+      p.o += q.o + r.o
+      p.n += q.n + r.n
+      sg.splice(i, 2)
     }
-  })
-  return { C, R, g, f, b, w, tg: pick(w, ls.length) }
+  }
+  const sm = (2 * eq) / Math.max(1, ink(a) + ink(b))
+  return sm >= SIM ? [sg, sm] : null
 }
 
-export const hit = (gr: Gr, x: number, y: number) => {
-  const c = Math.floor(x / 2), r = Math.floor(y / 4)
-  return gr.w.findIndex(w => w.r === r && c >= w.a && c < w.b)
+const pair = (D: string[], A: string[]): [number, number, Sg[]][] => {
+  const n = D.length, m = A.length
+  if (n * m > MAXP) {
+    const r: [number, number, Sg[]][] = []
+    for (let i = 0; i < Math.min(n, m); i++) {
+      const w = words(D[i]!, A[i]!)
+      if (w) r.push([i, i, w[0]])
+    }
+    return r
+  }
+  const W = m + 1, S = new Float64Array((n + 1) * W)
+  const M: ([Sg[], number] | null)[] = D.flatMap(d => A.map(a => words(d, a)))
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--) {
+      const w = M[i * m + j]
+      S[i * W + j] = Math.max(S[(i + 1) * W + j]!, S[i * W + j + 1]!, w ? w[1] + S[(i + 1) * W + j + 1]! : 0)
+    }
+  const r: [number, number, Sg[]][] = []
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    const w = M[i * m + j], v = S[i * W + j]!
+    if (w && v === w[1] + S[(i + 1) * W + j + 1]!) { r.push([i, j, w[0]]); i++; j++ }
+    else if (v === S[(i + 1) * W + j]) i++
+    else j++
+  }
+  return r
+}
+
+export const txt = (sg: Sg, hl: Hl) => (sg.x < 0 || hl.has(sg.x) ? sg.n : sg.o)
+
+export function build(ls: Ln[], C: number): Gr {
+  const rw: Rw[] = []
+  const sv = (t: string): Sg[] => [{ o: t, n: t, x: -1 }]
+  let i = 0
+  while (i < ls.length) {
+    const l = ls[i]!
+    if (l.k !== '-') {
+      const t = san(l.t)
+      if (l.k === '+') rw.push({ k: '+', on: null, nn: l.n, sg: [{ o: '', n: t, x: 0 }] })
+      else rw.push({ k: l.k, on: l.n, nn: l.n, sg: sv(t) })
+      i++
+      continue
+    }
+    const ds: Ln[] = [], as: Ln[] = []
+    while (i < ls.length && ls[i]!.k === '-') ds.push(ls[i++]!)
+    while (i < ls.length && ls[i]!.k === '+') as.push(ls[i++]!)
+    const D = ds.map(l => san(l.t)), A = as.map(l => san(l.t))
+    const del = (j: number) => rw.push({ k: '-', on: ds[j]!.n, nn: null, sg: [{ o: D[j]!, n: D[j]!, x: 0 }] })
+    const add = (j: number) => rw.push({ k: '+', on: null, nn: as[j]!.n, sg: [{ o: '', n: A[j]!, x: 0 }] })
+    let p = 0, q = 0
+    for (const [a, b, sg] of pair(D, A)) {
+      while (p < a) del(p++)
+      while (q < b) add(q++)
+      rw.push({ k: 'm', on: ds[a]!.n, nn: as[b]!.n, sg })
+      p++
+      q++
+    }
+    while (p < D.length) del(p++)
+    while (q < A.length) add(q++)
+  }
+  const tr: number[] = []
+  rw.forEach((r, j) => r.sg.forEach(s => { if (s.x >= 0) { s.x = tr.length; tr.push(j) } }))
+  const nt = tr.length
+  const k = Math.min(nt, MAXT)
+  const tg = Array.from({ length: k }, (_, i) => Math.floor((i * nt) / k))
+  return { C, R: Math.max(8, rw.length + PAD * 2), rw, nt, tg, tr }
+}
+
+export function span(gr: Gr, hl: Hl, x: number) {
+  const j = gr.tr[x]!
+  let c = GW
+  for (const s of gr.rw[j]!.sg) {
+    const w = txt(s, hl).length
+    if (s.x === x) return { r: j + PAD, a: Math.min(c, gr.C - 1), b: Math.min(gr.C, c + Math.max(1, w)) }
+    c += w
+  }
+  return { r: j + PAD, a: GW, b: GW + 1 }
+}
+
+export function hit(gr: Gr, hl: Hl, x: number, y: number) {
+  const r = gr.rw[Math.floor(y / 4) - PAD], cx = Math.floor(x / 2)
+  if (!r || r.k === ' ' || r.k === '~') return -1
+  let c = GW
+  for (const s of r.sg) {
+    const w = txt(s, hl).length
+    if (s.x >= 0 && cx >= c && cx < c + Math.max(1, w)) return s.x
+    c += w
+  }
+  return -1
 }

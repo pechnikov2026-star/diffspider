@@ -1,5 +1,5 @@
-import { hit } from './grid'
-import type { Gr, Wd } from './grid'
+import { hit, span } from './grid'
+import type { Gr } from './grid'
 
 type Lg = { fx: number; fy: number; sx: number; sy: number; tx: number; ty: number; st: number }
 type Pt = { x: number; y: number; w: number }
@@ -33,14 +33,19 @@ const mark = (s: Sm, wi: number) => {
   s.hl.set(wi, (s.nc++ * 3 + wi) % NPAL)
 }
 
+const at = (gr: Gr, s: Sm, p: Pt) => {
+  if (p.w < 0) return p
+  const w = span(gr, s.hl, p.w)
+  return { x: w.a + w.b, y: w.r * 4 + 2, w: p.w }
+}
+
 export function start(gr: Gr): Sm {
-  const cy = (w: Wd) => w.r * 4 + 2
-  const ws = gr.tg.map(t => gr.w[t]!)
-  const mid = gr.R * 2
+  const cy = (t: number) => span(gr, new Map(), t).r * 4 + 2
+  const tg = gr.tg, mid = gr.R * 2
   const pts: Pt[] = [
-    { x: -16, y: ws.length ? cy(ws[0]!) : mid, w: -1 },
-    ...gr.tg.map((t, i) => ({ x: ws[i]!.a + ws[i]!.b, y: cy(ws[i]!), w: t })),
-    { x: gr.C * 2 + 18, y: ws.length ? cy(ws[ws.length - 1]!) : mid, w: -1 },
+    { x: -16, y: tg.length ? cy(tg[0]!) : mid, w: -1 },
+    ...tg.map(t => ({ x: 0, y: 0, w: t })),
+    { x: gr.C * 2 + 18, y: tg.length ? cy(tg[tg.length - 1]!) : mid, w: -1 },
   ]
   const s: Sm = {
     bx: pts[0]!.x, by: pts[0]!.y, vx: SPD, vy: 0, hd: 0,
@@ -53,8 +58,8 @@ export function start(gr: Gr): Sm {
   return s
 }
 
-const walk = (s: Sm) => {
-  const p = s.pts[s.pi]!
+const walk = (gr: Gr, s: Sm) => {
+  const p = at(gr, s, s.pts[s.pi]!)
   const dx = p.x - s.bx, dy = p.y - s.by, d = Math.hypot(dx, dy)
   if (d <= SPD) {
     s.bx = p.x
@@ -83,7 +88,7 @@ const gait = (gr: Gr, s: Sm) => {
       l.fy = l.sy + (l.ty - l.sy) * t
       if (l.st >= STP) {
         l.st = -1
-        mark(s, hit(gr, l.fx, l.fy))
+        mark(s, hit(gr, s.hl, l.fx, l.fy))
       }
       return
     }
@@ -100,12 +105,12 @@ const gait = (gr: Gr, s: Sm) => {
 
 export function step(gr: Gr, s: Sm) {
   if (s.done) return
-  walk(s)
+  walk(gr, s)
   if (!s.done) gait(gr, s)
 }
 
 export function finish(gr: Gr, s: Sm) {
   for (let n = 0; !s.done && n < 20000; n++) step(gr, s)
   s.done = true
-  for (const t of gr.tg) mark(s, t)
+  for (let t = 0; t < gr.nt; t++) mark(s, t)
 }

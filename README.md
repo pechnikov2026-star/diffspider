@@ -17,9 +17,19 @@
 
 ## What it does
 
-Whenever Claude runs `Edit` or `Write`, diffspider replaces the plain diff with its own view.
-A braille spider walks in from the left, steps from word to word on the added lines, and every
-word a foot lands on lights up. When it is done it leaves to the right and the marks stay.
+Whenever Claude shows a diff, diffspider replaces it with its own view. It starts with the code
+as it looked before. A braille spider walks in from the left and steps onto every word that
+actually changed. Where it lands, the old word turns into the new one and lights up. Whole new
+lines appear when it reaches them, removed lines go red. When it is done it leaves to the right
+and the marks stay.
+
+It crawls over:
+
+- `Edit` and `MultiEdit`, and `Write` when it overwrites an existing file (a new file is no diff and keeps the normal view)
+- `NotebookEdit` cell changes
+- diffs printed by `Bash`, such as `git diff` or `diff -u`, including the compact form `rtk git diff` prints
+- fenced ` ```diff ` blocks in Claude's replies
+- any other tool whose result carries a structured patch
 
 <p align="center">
   <img src="assets/demo.gif" alt="diffspider crawling over an Edit diff" width="690">
@@ -53,17 +63,19 @@ Answer `y` to add the marketplace and press Enter to install it for your user. I
 
 | File | Job |
 | --- | --- |
-| `hooks/diff.ts` | turns the tool result into numbered diff lines |
-| `hooks/grid.ts` | lays out the text cells and picks the words to visit |
+| `hooks/diff.ts` | turns a tool result, shell output or markdown fence into numbered diff lines |
+| `hooks/grid.ts` | pairs removed and added lines, diffs them word by word, picks the words to visit |
 | `hooks/spider.ts` | body path, gait and steps |
 | `hooks/paint.ts` | two-bone IK legs and braille body, packed into a `Raster` |
-| `hooks/register.tsx` | the hooks: `tool.call`, `ui.render` for `ToolUse` and `ToolGroup` |
+| `hooks/register.tsx` | the hooks: `tool.call`, `turn.start`, `ui.render` for `ToolUse`, `ToolResult`, `ToolGroup` and `AssistantMessage` |
+
+Removed and added lines inside a hunk are paired by similarity. A pair is diffed token by token, so only the words that differ become targets. Lines with too little in common stay a separate removal and addition.
 
 Each leg has a resting spot next to the body. A foot stays planted until it drifts too far from that spot, then it steps ahead. The legs move in two alternating groups, so four feet are always on the ground.
 
 ## What runs
 
-diffspider ships one function hook module, `hooks/register.tsx`, declared in `hooks/hooks.json`. Claude Code loads it in-process. It only draws: it reads the diff of the current `Edit` or `Write` row and renders the spider over it. It has no MCP servers, commands, skills or agents, and it does not run shell commands. It works in the Claude Code terminal only, not on claude.ai or in Cowork.
+diffspider ships one function hook module, `hooks/register.tsx`, declared in `hooks/hooks.json`. Claude Code loads it in-process. It only draws: it reads the diff a tool row or a reply already holds and renders the spider over it. It has no MCP servers, commands, skills or agents, and it does not run shell commands. It works in the Claude Code terminal only, not on claude.ai or in Cowork.
 
 ## Privacy
 

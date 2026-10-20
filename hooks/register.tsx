@@ -1,6 +1,6 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import { lines } from './diff'
+import { fences, lines } from './diff'
 import type { Ln } from './diff'
 import { build } from './grid'
 import type { Gr } from './grid'
@@ -9,51 +9,85 @@ import { finish, start, step } from './spider'
 import type { Sm } from './spider'
 
 type Rn = { gr: Gr; s: Sm; cl: string; tm?: { cancel: () => void } }
-type Out = { filePath?: string; type?: string }
+type Out = { filePath?: string; type?: string; notebook_path?: string }
+type In = { command?: string; file_path?: string; notebook_path?: string }
 
-const TL = new Set(['Edit', 'Write', 'MultiEdit'])
 const KEY = 'crawler'
 const FPS = 33
 const KEEP = 200
 
 const cols = (n?: number) => Math.max(30, Math.min(160, (n ?? 100) - 6))
 const cnt = (ls: Ln[], k: Ln['k']) => ls.reduce((n, l) => n + (l.k === k ? 1 : 0), 0)
+const sum = (ls: Ln[], gr: Gr) => {
+  const m = gr.rw.filter(r => r.k === 'm').length
+  return [m && `${m} changed`, `${cnt(ls, '+') - m} added`, `${cnt(ls, '-') - m} removed`].filter(Boolean).join(', ')
+}
 
-function end($: EngineInterface, id: string, r: Rn, fr: Set<string>) {
+const head = (tool: string, inp: In, o: Out) => {
+  if (tool === 'Bash') return ['Bash', (inp.command ?? '').split('\n')[0]!.slice(0, 80)]
+  const p = o.filePath ?? o.notebook_path ?? inp.file_path ?? inp.notebook_path ?? ''
+  if (tool === 'Write' && o.type === 'create') return ['Create', p]
+  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return ['Update', p]
+  return [tool, p]
+}
+
+type St = { runs: Map<string, Rn>; fr: Set<string> }
+
+function end($: EngineInterface, st: St, id: string, r: Rn) {
   r.tm?.cancel()
   r.tm = undefined
   finish(r.gr, r.s)
   r.cl = frame(r.gr, r.s)
-  fr.delete(id)
+  st.fr.delete(id)
   $.ui.invalidate('ui.render')
 }
 
-function run($: EngineInterface, id: string, r: Rn, fr: Set<string>) {
+function run($: EngineInterface, st: St, rid: string, key: string, id: string, r: Rn) {
   r.tm = $.clock.every(FPS, () => {
     if (r.s.done) return
     step(r.gr, r.s)
-    if (r.s.done) return end($, id, r, fr)
+    if (r.s.done) return end($, st, id, r)
     r.cl = frame(r.gr, r.s)
-    void $.ui.blit({ requestId: id, key: KEY, cells: r.cl }).then(x => {
-      if ('deny' in x && x.deny && !r.s.done) end($, id, r, fr)
+    void $.ui.blit({ requestId: rid, key, cells: r.cl }).then(x => {
+      if ('deny' in x && x.deny && !r.s.done) end($, st, id, r)
     })
   })
 }
 
-export const register: Register = on => {
-  const runs = new Map<string, Rn>()
-  const fr = new Set<string>()
-
-  const trim = () => {
-    for (const [id, r] of runs) {
-      if (runs.size <= KEEP) break
-      if (r.s.done) runs.delete(id)
+function get($: EngineInterface, st: St, rid: string, key: string, id: string, ls: Ln[], C: number) {
+  let r = st.runs.get(id)
+  if (!r || r.gr.C !== C) {
+    const gr = build(ls, C), s = start(gr)
+    if (r || !st.fr.has(id)) {
+      finish(gr, s)
+      st.fr.delete(id)
+    }
+    r?.tm?.cancel()
+    r = { gr, s, cl: frame(gr, s) }
+    st.runs.set(id, r)
+    for (const [k, x] of st.runs) {
+      if (st.runs.size <= KEEP) break
+      if (x.s.done) st.runs.delete(k)
     }
   }
+  if (!r.s.done && !r.tm) run($, st, rid, key, id, r)
+  return r
+}
 
-  on('tool.call', ($, e, next) => {
-    if (TL.has(e.tool) && e.tool_use_id) fr.add(e.tool_use_id)
+export const register: Register = on => {
+  const st: St = { runs: new Map(), fr: new Set() }
+  const { runs, fr } = st
+  let live = false
+
+  on('turn.start', ($, e, next) => {
+    live = true
     return next(e)
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const r = await next(e)
+    if (e.tool_use_id && 'result' in r && r.result !== undefined && !r.isError && lines(e.tool, r.result)) fr.add(e.tool_use_id)
+    return r
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
@@ -64,36 +98,54 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const p = e.props
-    if (e.surface !== 'terminal' || p.isRunning || p.isErrored || p.isInterrupted || !TL.has(p.tool)) return next(e)
-    const ls = lines(p.output)
+    if (e.surface !== 'terminal' || p.isRunning || p.isErrored || p.isInterrupted) return next(e)
+    const ls = lines(p.tool, p.output)
     if (!ls) return next(e)
-    const id = e.requestId, C = cols(e.viewport?.columns)
-    let r = runs.get(id)
-    if (!r || r.gr.C !== C) {
-      const gr = build(ls, C), s = start(gr)
-      if (r || !fr.has(id)) {
-        finish(gr, s)
-        fr.delete(id)
-      }
-      r?.tm?.cancel()
-      r = { gr, s, cl: frame(gr, s) }
-      runs.set(id, r)
-      trim()
-    }
-    if (!r.s.done && !r.tm) run($, id, r, fr)
-    const o = p.output as Out
-    const vb = p.tool === 'Write' && o.type === 'create' ? 'Create' : 'Update'
+    const id = e.requestId
+    const r = get($, st, id, KEY, id, ls, cols(e.viewport?.columns))
+    const cwd = await $.session.cwd().catch(() => '\0')
+    const [vb, arg] = head(p.tool, (p.input ?? {}) as In, p.output as Out)
+    const rel = arg!.startsWith(cwd + '/') ? arg!.slice(cwd.length + 1) : arg
     const { Box, Text, Raster } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
         <Text>
-          <Text bold>{vb}</Text>({o.filePath ?? ''})
+          <Text bold>{vb}</Text>({rel})
         </Text>
         <Text dimColor>
-          {'  ⎿  '}crawled {cnt(ls, '+')} added, {cnt(ls, '-')} removed
+          {'  ⎿  '}crawled {sum(ls, r.gr)}
         </Text>
         <Raster key={KEY} columns={r.gr.C} rows={r.gr.R} cells={r.cl} />
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'ToolResult' }, ($, e, next) => {
+    const p = e.props
+    if (e.surface !== 'terminal' || p.isErrored || !lines(p.tool, p.output)) return next(e)
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.surface !== 'terminal') return next(e)
+    const md = e.props.text, fs = fences(md)
+    if (!fs.length) return next(e)
+    const C = cols(e.viewport?.columns)
+    const { Box, Markdown, Raster } = $.ui.resolve(e)
+    const kids: RenderChildren[] = []
+    let at = 0
+    fs.forEach((f, i) => {
+      const id = `${e.requestId}:${i}`, key = `${KEY}-${i}`
+      if (live && !runs.has(id)) fr.add(id)
+      const r = get($, st, e.requestId, key, id, f.ls, C)
+      const pre = md.slice(at, f.a).trim()
+      if (pre) kids.push(<Markdown key={`md-${i}`} text={pre} />)
+      kids.push(<Raster key={key} columns={r.gr.C} rows={r.gr.R} cells={r.cl} />)
+      at = f.b
+    })
+    const tail = md.slice(at).trim()
+    if (tail) kids.push(<Markdown key="md-end" text={tail} />)
+    return <Box flexDirection="column">{kids}</Box>
   })
 }

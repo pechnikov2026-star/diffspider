@@ -1,12 +1,16 @@
-import { DF } from './grid'
+import { GW, PAD, txt } from './grid'
 import type { Gr } from './grid'
 import { HIP, L1, L2 } from './spider'
 import type { Sm } from './spider'
 
+const DF = 0x01000000
 const PAL: [number, number][] = [
   [0xff2bd6, 0x16001a], [0x22e3ff, 0x00141a], [0x8f5bff, 0xffffff], [0x2bff88, 0x001408],
   [0xff2bd6, DF], [0x22e3ff, DF], [0xb18cff, DF],
 ]
+const GUT = 0x5c6370, CTX = 0x8b8f98, PEND = 0xff8fa3
+const ADD = { bg: 0x0f2418, mk: 0x2bff88, fg: 0xe6e6e6 }
+const DEL = { bg: 0x2a1216, mk: 0xff5c7a, fg: 0x8a5a5a }
 const LEG = 0xb7c4ff, BODY = 0xffffff, EYE = 0xff3355
 const BIT = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]]
 
@@ -50,15 +54,40 @@ const body = (v: Cv, s: Sm) => {
 }
 
 export function frame(gr: Gr, s: Sm): string {
-  const { C, R } = gr, N = C * R
-  const g = gr.g.slice(), f = gr.f.slice(), b = gr.b.slice()
-  for (const [wi, pc] of s.hl) {
-    const w = gr.w[wi]!, [hb, hf] = PAL[pc]!
-    for (let i = w.r * C + w.a; i < w.r * C + w.b; i++) {
-      if (hf === DF) f[i] = hb
-      else { b[i] = hb; f[i] = hf }
+  const { C, R } = gr, N = C * R, hl = s.hl
+  const g = new Uint32Array(N).fill(0x20), f = new Uint32Array(N).fill(DF), b = new Uint32Array(N).fill(DF)
+  const put = (r: number, c: number, t: string, fg: number, bg?: number) => {
+    let i = 0
+    for (const ch of t) {
+      if (c + i >= C) break
+      const k = r * C + c + i++
+      g[k] = ch.codePointAt(0)!
+      f[k] = fg
+      if (bg !== undefined) b[k] = bg
     }
+    return i
   }
+  gr.rw.forEach((w, j) => {
+    const r = j + PAD
+    if (w.k === '~') return void put(r, 2, w.sg[0]!.n, GUT)
+    const sx = w.sg.filter(q => q.x >= 0), all = sx.every(q => hl.has(q.x))
+    const nw = w.k === 'm' ? all : w.k === '+'
+    const gone = w.k === '-' && all
+    const bg = w.k === ' ' ? DF : gone || (w.k === 'm' && !all) ? DEL.bg : nw ? ADD.bg : DF
+    b.fill(bg, r * C, r * C + C)
+    const n = nw ? w.nn : w.k === '+' ? null : w.on
+    put(r, 0, (n === null ? '' : String(n)).padStart(4), GUT)
+    put(r, 5, w.k === ' ' ? ' ' : nw ? '+' : '-', nw ? ADD.mk : w.k === ' ' ? GUT : DEL.mk)
+    const base = w.k === ' ' ? CTX : gone ? DEL.fg : nw ? ADD.fg : w.k === 'm' ? 0xc8b0b4 : CTX
+    let c = GW
+    for (const q of w.sg) {
+      const t = txt(q, hl)
+      if (q.x >= 0 && hl.has(q.x) && w.k === 'm' && t.trim()) {
+        const [hb, hf] = PAL[hl.get(q.x)!]!
+        c += hf === DF ? put(r, c, t, hb) : put(r, c, t, hf, hb)
+      } else c += put(r, c, t, q.x >= 0 && w.k === 'm' && !hl.has(q.x) ? PEND : base)
+    }
+  })
   if (!s.done) {
     const v: Cv = { C, PW: C * 2, PH: R * 4, bits: new Uint8Array(N), kd: new Uint8Array(N) }
     legs(v, s)
